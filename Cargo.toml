@@ -1,0 +1,8 @@
+[package]
+name = "rpgm-archive-decrypter"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4.5.21", features = ["wrap_help"] }
+color-print = "0.3.7"

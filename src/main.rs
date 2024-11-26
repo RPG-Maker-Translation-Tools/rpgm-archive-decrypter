@@ -1,12 +1,12 @@
 use clap::{value_parser, Arg, ArgAction, ArgMatches, Command};
+use rayon::prelude::*;
 use std::{
     cell::UnsafeCell,
     fs::{create_dir_all, read, write},
-    mem::take,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
     time::Instant,
 };
-
 #[derive(PartialEq, Clone, Copy)]
 #[allow(clippy::upper_case_acronyms)]
 enum EngineType {
@@ -39,7 +39,7 @@ enum SeekFrom {
 
 impl VecWalker {
     pub fn new(data: Vec<u8>) -> Self {
-        let len = data.len();
+        let len: usize = data.len();
         VecWalker { data, pos: 0, len }
     }
 
@@ -49,94 +49,104 @@ impl VecWalker {
         &self.data[start..self.pos]
     }
 
+    pub fn read_chunk(&mut self) -> [u8; 4] {
+        let read: &[u8] = self.advance(4);
+        unsafe { *(read.as_ptr() as *const [u8; 4]) }
+    }
+
+    pub fn read_byte(&mut self) -> u8 {
+        let byte: u8 = self.data[self.pos];
+        self.pos += 1;
+        byte
+    }
+
     pub fn seek(&mut self, offset: usize, seek_from: SeekFrom) {
-        let new_pos: usize = match seek_from {
+        self.pos = match seek_from {
             SeekFrom::Start => offset,
             SeekFrom::Current => self.pos + offset,
         };
-
-        self.pos = new_pos;
     }
 }
 
 struct Localization<'a> {
-    input_path_arg: &'a str,
-    input_path_missing: &'a str,
-    output_path_arg: &'a str,
-    output_path_missing: &'a str,
-    unknown_engine_type: &'a str,
-    unknown_archive_header: &'a str,
-    could_not_get_archive_header: &'a str,
-    output_files_already_exists: &'a str,
-    force_arg: &'a str,
+    // Arg descriptions
+    input_path_arg_desc: &'a str,
+    output_path_arg_desc: &'a str,
+    force_arg_desc: &'a str,
+    help_arg_desc: &'a str,
+    about: &'a str,
+
+    // Messages
+    input_path_missing_msg: &'a str,
+    output_path_missing_msg: &'a str,
+    unknown_engine_type_msg: &'a str,
+    unknown_archive_header_msg: &'a str,
+    output_files_already_exists_msg: &'a str,
 }
 
-struct ArchivedFile {
+struct Archive {
     name: String,
     size: i32,
     offset: usize,
     key: u32,
 }
 
-struct Archive<'a> {
+struct Decrypter<'a> {
     walker: UnsafeCell<VecWalker>,
-    archived_files: Vec<ArchivedFile>,
     key: u32,
-    output_path: &'a Path,
-    force: bool,
-    engine_type: EngineType,
+    engine: EngineType,
     localization: Localization<'a>,
 }
 
-impl<'a> Archive<'a> {
-    fn new(
-        input_path: &'a Path,
-        output_path: &'a Path,
-        force: bool,
-        localization: Localization<'a>,
-    ) -> Self {
+impl<'a> Decrypter<'a> {
+    fn new(bytes: Vec<u8>, localization: Localization<'a>) -> Self {
         Self {
-            walker: UnsafeCell::new(VecWalker::new(read(input_path).unwrap())),
-            archived_files: Vec::new(),
+            walker: UnsafeCell::new(VecWalker::new(bytes)),
             key: 0xDEADCAFE,
-            output_path,
-            force,
-            engine_type: EngineType::XPVX,
+            engine: EngineType::XPVX,
             localization,
         }
     }
 
-    fn extract(&mut self) {
-        let version: u8 = self.get_version();
+    fn extract(&mut self, output_path: &Path, force: bool) {
+        let version: u8 = self.get_archive_version();
 
         if version == 1 {
-            self.engine_type = EngineType::XPVX
+            self.engine = EngineType::XPVX
         } else if version == 3 {
-            self.engine_type = EngineType::VXAce
+            self.engine = EngineType::VXAce
         } else {
-            panic!("{}", self.localization.unknown_engine_type)
+            panic!("{}", self.localization.unknown_engine_type_msg)
         }
 
-        self.read_archive();
+        let archives: Vec<Archive> = self.read_archive();
+
         let walker: &mut VecWalker = unsafe { &mut *self.walker.get() };
+        let arc: Arc<Mutex<&mut VecWalker>> = Arc::new(Mutex::new(walker));
 
-        for archive in take(&mut self.archived_files) {
-            let actual_output_path: PathBuf = self.output_path.parent().unwrap().join(archive.name);
+        archives.into_par_iter().for_each(|archive: Archive| {
+            let output_path: PathBuf = output_path.join(archive.name);
 
-            if actual_output_path.exists() && !self.force {
-                println!("{}", self.localization.output_files_already_exists);
+            if output_path.exists() && !force {
+                println!("{}", self.localization.output_files_already_exists_msg);
                 return;
             }
 
-            walker.seek(archive.offset, SeekFrom::Start);
-            let data: &[u8] = walker.advance(archive.size as usize);
+            let mut walker = arc.lock().unwrap();
 
-            create_dir_all(actual_output_path.parent().unwrap()).unwrap();
-            write(actual_output_path, self.decrypt_archive(data, archive.key)).unwrap();
-        }
+            walker.seek(archive.offset, SeekFrom::Start);
+
+            let mut data: Vec<u8> = Vec::with_capacity(archive.size as usize);
+            data.extend_from_slice(walker.advance(archive.size as usize));
+
+            drop(walker);
+
+            create_dir_all(unsafe { output_path.parent().unwrap_unchecked() }).unwrap();
+            write(output_path, Self::decrypt_archive(&data, archive.key)).unwrap();
+        });
     }
 
-    fn decrypt_archive(&mut self, data: &[u8], mut key: u32) -> Vec<u8> {
+    fn decrypt_archive(data: &[u8], mut key: u32) -> Vec<u8> {
         let mut decrypted: Vec<u8> = Vec::with_capacity(data.len());
 
         let mut key_bytes: [u8; 4] = key.to_le_bytes();
@@ -156,18 +166,17 @@ impl<'a> Archive<'a> {
         decrypted
     }
 
-    fn get_version(&mut self) -> u8 {
+    fn get_archive_version(&mut self) -> u8 {
         let walker: &mut VecWalker = unsafe { &mut *self.walker.get() };
+        let header: &[u8] = walker.advance(6);
 
-        if let Ok(header) = String::from_utf8(unsafe { (*self.walker.get()).advance(6).to_vec() }) {
-            if header != "RGSSAD" {
-                panic!("{}", self.localization.unknown_archive_header);
-            }
-        } else {
-            panic!("{}", self.localization.could_not_get_archive_header);
+        if header != b"RGSSAD" {
+            panic!("{}", self.localization.unknown_archive_header_msg);
         }
 
-        let version: u8 = *unsafe { walker.advance(2).last().unwrap_unchecked() };
+        walker.seek(1, SeekFrom::Current);
+        let version: u8 = walker.read_byte();
+
         walker.seek(0, SeekFrom::Start);
 
         version
@@ -176,7 +185,7 @@ impl<'a> Archive<'a> {
     fn decrypt_integer(&mut self, value: i32) -> i32 {
         let result: i32 = value ^ self.key as i32;
 
-        if self.engine_type != EngineType::VXAce {
+        if self.engine == EngineType::XPVX {
             self.key = self.key.wrapping_mul(7).wrapping_add(3);
         }
 
@@ -186,7 +195,7 @@ impl<'a> Archive<'a> {
     fn decrypt_filename(&mut self, filename: &[u8]) -> String {
         let mut decrypted: Vec<u8> = Vec::with_capacity(filename.len());
 
-        if self.engine_type == EngineType::VXAce {
+        if self.engine == EngineType::VXAce {
             let key_bytes: [u8; 4] = self.key.to_le_bytes();
             let mut j: usize = 0;
 
@@ -208,33 +217,28 @@ impl<'a> Archive<'a> {
         String::from_utf8(decrypted).unwrap()
     }
 
-    fn read_archive(&mut self) {
+    fn read_archive(&mut self) -> Vec<Archive> {
         let walker: &mut VecWalker = unsafe { &mut *self.walker.get() };
         walker.seek(8, SeekFrom::Start);
 
-        if self.engine_type == EngineType::VXAce {
-            self.key = u32::from_le_bytes(walker.advance(4).try_into().unwrap())
+        if self.engine == EngineType::VXAce {
+            self.key = u32::from_le_bytes(walker.read_chunk())
                 .wrapping_mul(9)
                 .wrapping_add(3);
         }
 
+        let mut archives: Vec<Archive> = Vec::with_capacity(1024);
+
         loop {
-            if self.engine_type == EngineType::VXAce {
-                let offset: usize = self.decrypt_integer(i32::from_le_bytes(unsafe {
-                    *(walker.advance(4).as_ptr() as *const [u8; 4])
-                })) as usize;
+            let (name, size, offset, key) = if self.engine == EngineType::VXAce {
+                let offset: usize =
+                    self.decrypt_integer(i32::from_le_bytes(walker.read_chunk())) as usize;
 
-                let size: i32 = self.decrypt_integer(i32::from_le_bytes(unsafe {
-                    *(walker.advance(4).as_ptr() as *const [u8; 4])
-                }));
+                let size: i32 = self.decrypt_integer(i32::from_le_bytes(walker.read_chunk()));
 
-                let key: u32 = self.decrypt_integer(i32::from_le_bytes(unsafe {
-                    *(walker.advance(4).as_ptr() as *const [u8; 4])
-                })) as u32;
+                let key: u32 = self.decrypt_integer(i32::from_le_bytes(walker.read_chunk())) as u32;
 
-                let length: i32 = self.decrypt_integer(i32::from_le_bytes(unsafe {
-                    *(walker.advance(4).as_ptr() as *const [u8; 4])
-                }));
+                let length: i32 = self.decrypt_integer(i32::from_le_bytes(walker.read_chunk()));
 
                 if offset == 0 {
                     break;
@@ -242,40 +246,36 @@ impl<'a> Archive<'a> {
 
                 let name: String = self.decrypt_filename(walker.advance(length as usize));
 
-                self.archived_files.push(ArchivedFile {
-                    name,
-                    size,
-                    offset,
-                    key,
-                });
-            }
-            let length: i32 = self.decrypt_integer(i32::from_le_bytes(unsafe {
-                *(walker.advance(4).as_ptr() as *const [u8; 4])
-            }));
+                (name, size, offset, key)
+            } else {
+                let length: i32 = self.decrypt_integer(i32::from_le_bytes(walker.read_chunk()));
 
-            let name: String = self.decrypt_filename(walker.advance(length as usize));
+                let name: String = self.decrypt_filename(walker.advance(length as usize));
 
-            let size: i32 = self.decrypt_integer(i32::from_le_bytes(unsafe {
-                *(walker.advance(4).as_ptr() as *const [u8; 4])
-            }));
+                let size: i32 = self.decrypt_integer(i32::from_le_bytes(walker.read_chunk()));
 
-            let offset: usize = walker.pos;
+                let offset: usize = walker.pos;
 
-            let key: u32 = self.key;
+                let key: u32 = self.key;
 
-            self.archived_files.push(ArchivedFile {
+                walker.seek(size as usize, SeekFrom::Current);
+
+                if walker.pos == walker.len {
+                    break;
+                }
+
+                (name, size, offset, key)
+            };
+
+            archives.push(Archive {
                 name,
                 size,
                 offset,
                 key,
             });
-
-            walker.seek(size as usize, SeekFrom::Current);
-
-            if walker.pos == walker.len {
-                break;
-            }
         }
+
+        archives
     }
 }
 
@@ -283,71 +283,80 @@ fn main() {
     let start_time: Instant = Instant::now();
 
     const LOCALIZATION: Localization = Localization {
-        input_path_arg: "Path to the RGSSAD file.",
-        input_path_missing: "Input file does not exist.",
-        output_path_arg: "Where to put output files.",
-        output_path_missing: "Output path does not exist.",
-        could_not_get_archive_header: "Couldn't read archive header (first 6 bytes).",
-        unknown_archive_header: "Unknown archive header. Expected: RGSSAD.",
-        unknown_engine_type:
+        input_path_arg_desc: "Path to the RGSSAD file.",
+        output_path_arg_desc: "Path to put output files.",
+        force_arg_desc: "Forcefully overwrite existing Data, Graphics and other files.",
+        help_arg_desc: "Prints the help message.",
+        about: "A tool to extract encrypted .rgss RPG Maker archives.",
+
+        input_path_missing_msg: "Input file does not exist.",
+        output_path_missing_msg: "Output path does not exist.",
+        unknown_archive_header_msg: "Unknown archive header. Expected: RGSSAD.",
+        unknown_engine_type_msg:
             "Unknown archive game engine. Maybe, file's extension is spelled wrong?",
-        output_files_already_exists:
+        output_files_already_exists_msg:
             "Output file already exists. Use --force to forcefully overwrite it.",
-        force_arg: "Forcefully overwrite existing Data, Graphics etc. files.",
     };
 
     let input_path_arg: Arg = Arg::new("input-path")
         .short('i')
-        .long("input")
-        .help(LOCALIZATION.input_path_arg)
+        .long("input-file")
+        .help(LOCALIZATION.input_path_arg_desc)
         .value_parser(value_parser!(PathBuf))
         .default_value("./");
 
     let output_path_arg: Arg = Arg::new("output-path")
         .short('o')
-        .long("output")
-        .help(LOCALIZATION.output_path_arg)
+        .long("output-dir")
+        .help(LOCALIZATION.output_path_arg_desc)
         .value_parser(value_parser!(PathBuf))
         .default_value("./");
 
     let force: Arg = Arg::new("force")
         .short('f')
         .long("force")
-        .help(LOCALIZATION.force_arg)
+        .help(LOCALIZATION.force_arg_desc)
         .action(ArgAction::SetTrue);
 
+    let help: Arg = Arg::new("help")
+        .short('h')
+        .long("help")
+        .help(LOCALIZATION.help_arg_desc)
+        .action(ArgAction::Help);
+
     let cli: Command = Command::new("")
+        .about(LOCALIZATION.about)
         .disable_version_flag(true)
         .disable_help_subcommand(true)
         .disable_help_flag(true)
         .next_line_help(true)
         .term_width(120)
-        .args([input_path_arg, output_path_arg, force])
-        .hide_possible_values(true);
+        .args([input_path_arg, output_path_arg, force, help]);
 
     let matches: ArgMatches = cli.get_matches();
 
     let input_path: &Path = matches.get_one::<PathBuf>("input-path").unwrap();
 
     if !input_path.exists() {
-        panic!("{}", LOCALIZATION.input_path_missing)
+        panic!("{}", LOCALIZATION.input_path_missing_msg)
     }
 
     let mut output_path: &Path = matches.get_one::<PathBuf>("output-path").unwrap();
 
-    if !output_path.exists() {
-        panic!("{}", LOCALIZATION.output_path_missing);
-    }
-
     output_path = if *output_path.as_os_str() == *"./" {
-        input_path
+        unsafe { input_path.parent().unwrap_unchecked() }
     } else {
         output_path
     };
 
+    if !output_path.exists() {
+        panic!("{}", LOCALIZATION.output_path_missing_msg);
+    }
+
     let force_flag: bool = matches.get_flag("force");
 
-    Archive::new(input_path, output_path, force_flag, LOCALIZATION).extract();
+    let bytes: Vec<u8> = read(input_path).unwrap();
+    Decrypter::new(bytes, LOCALIZATION).extract(output_path, force_flag);
 
     println!("Elapsed: {}", start_time.elapsed().as_secs_f64())
 }

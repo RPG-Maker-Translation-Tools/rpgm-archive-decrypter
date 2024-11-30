@@ -22,9 +22,9 @@ Usage: rpgmad.exe [OPTIONS]
 
 Options:
   -i, --input-file <input-path>
-          Path to the RGSSAD file. [default: ./]
+          Path to the .rgss file.
   -o, --output-dir <output-path>
-          Path to put output files. [default: ./]
+          Path to put output files.
   -f, --force
           Forcefully overwrite existing Data, Graphics and other files.
   -h, --help

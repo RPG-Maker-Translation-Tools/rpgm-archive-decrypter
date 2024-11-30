@@ -1,6 +1,6 @@
 # rpgm-archive-decrypter
 
-RPGM Archive Decrypter is a [RPG Maker Decrypter](https://github.com/uuksu/rpgmakerdecrypter) rewrite in Rust (**_BLAZINGLY FAST_** :fire:).
+RPGM Archive Decrypter is a [RPG Maker Decrypter](https://github.com/uuksu/rpgmakerdecrypter) [rewrite in Rust](https://github.com/savannstm/rpgm-archive-decrypter-lib) (**_BLAZINGLY FAST_** :fire:).
 It can be used to extract encrypted archives of RPG Maker XP/VX/VXAce game engines.
 It is faster and lighter than RPG Maker Decrypter, and also has **NO** requirements to run, except a working PC.
 

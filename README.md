@@ -16,23 +16,23 @@ One with `.exe` extension is for Windows, without it - is for Linux.
 Call `rpgmad -h` for help.
 
 ```text
-A tool to extract encrypted .rgss RPG Maker archives.
+Extract encrypted .rgss RPG Maker archives.
 
 Usage: rpgmad.exe [OPTIONS]
 
 Options:
-  -i, --input-file <input-path>
-          Path to the .rgss file.
-  -o, --output-dir <output-path>
-          Path to put output files.
-  -f, --force
-          Forcefully overwrite existing Data, Graphics and other files.
-  -h, --help
-          Prints the help message.
+  -i, --input-path <INPUT_PATH>    Path to the .rgss file or directory containing it
+  -o, --output-path <OUTPUT_PATH>  Output directory
+  -f, --force                      Overwrite existing files
+  -h, --help                       Print help
 ```
 
 For example, to extract archive to same same directory where it exists:
 `rpgmad C:/RPGMakerGame/Archive.rgssad`.
+
+You can omit the file name, program will find it automatically: `rpgmad C:/RPGMakerGame`.
+
+Or just `rpgmad` if you're already in game directory.
 
 You can recongnize archives by their extensions: `rgssad`, `rgss2a`, `rgss3a`.
 

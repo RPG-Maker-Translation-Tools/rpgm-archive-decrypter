@@ -40,25 +40,26 @@ fn main() {
     if cli
         .input_path
         .extension()
-        .and_then(|e| e.to_str())
-        .is_none_or(|e| !e.starts_with("rgss"))
+        .and_then(|extension| extension.to_str())
+        .is_none_or(|extension| !extension.starts_with("rgss"))
     {
         cli.input_path = read_dir(&cli.input_path)
             .unwrap()
             .flatten()
-            .find(|e| {
-                e.path()
+            .find(|entry| {
+                entry
+                    .path()
                     .extension()
-                    .and_then(|ext| ext.to_str())
-                    .is_some_and(|ext| ext.starts_with("rgss"))
+                    .and_then(|extension| extension.to_str())
+                    .is_some_and(|extension| extension.starts_with("rgss"))
             })
-            .map(|e| e.path())
+            .map(|extension| extension.path())
             .expect("No .rgss archive found in the directory.");
     }
 
-    let bytes: Vec<u8> = read(&cli.input_path).unwrap();
+    let input_file_data: Vec<u8> = read(&cli.input_path).unwrap();
 
-    Decrypter::new(bytes)
+    Decrypter::new(input_file_data)
         .extract(&cli.output_path, cli.force)
         .unwrap();
 

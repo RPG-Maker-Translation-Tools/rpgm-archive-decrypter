@@ -1,9 +1,9 @@
 [package]
 name = "rpgmad"
-version = "1.0.2"
+version = "1.0.3"
 edition = "2021"
 
 [dependencies]
-clap = { version = "4.5.35", features = ["wrap_help", "derive"] }
+clap = { version = "4.5.38", features = ["wrap_help", "derive"] }
 clap_derive = "4.5.32"
 rpgmad-lib = { version = "1.0.2", features = ["rayon"] }

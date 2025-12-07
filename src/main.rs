@@ -180,8 +180,7 @@ fn encrypt_path(
                 continue;
             }
 
-            let relative_path = path.strip_prefix(&subdir).unwrap();
-
+            let relative_path = path.strip_prefix(".").unwrap();
             let data = read(path)?;
             archive_entries.push(ArchiveEntry {
                 path: Cow::Owned(

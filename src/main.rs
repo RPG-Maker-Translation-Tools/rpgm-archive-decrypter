@@ -71,7 +71,7 @@ enum Command {
     },
 }
 
-const ENCRYPT_DIRS: &[&str] = &["Graphics", "Data", "Audio"];
+const ENCRYPT_DIRS: &[&str] = &["Graphics", "Data", "Audio", "Fonts"];
 
 fn decrypt_path(
     mut input_path: PathBuf,

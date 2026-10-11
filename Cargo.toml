@@ -1,11 +1,30 @@
 [package]
 name = "rpgmad"
-version = "5.0.0"
+version = "6.0.0"
 edition = "2024"
+rust-version = "1.88.0"
 
 [dependencies]
-anyhow = "1.0.102"
-clap = { version = "4.6.0", features = ["wrap_help", "derive"] }
-clap_derive = "4.6.0"
-rpgmad-lib = "5.0.0"
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["wrap_help", "derive"] }
+encoding_rs = "0.8.42"
+rpgmad-lib = { version = "6.0.0" }
 walkdir = "2.5.0"
+
+[profile.release]
+lto = "fat"
+debug = false
+debug-assertions = false
+overflow-checks = false
+codegen-units = 1
+opt-level = 3
+panic = "abort"
+strip = "symbols"
+
+[profile.release.build-override]
+debug = false
+debug-assertions = false
+overflow-checks = false
+codegen-units = 1
+opt-level = 3
+strip = "symbols"

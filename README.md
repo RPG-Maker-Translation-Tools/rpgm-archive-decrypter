@@ -1,16 +1,12 @@
 # rpgm-archive-decrypter
 
-RPGM Archive Decrypter is a [RPG Maker Decrypter](https://github.com/uuksu/rpgmakerdecrypter) [rewrite in Rust](https://github.com/savannstm/rpgm-archive-decrypter-lib) (**_BLAZINGLY FAST_** :fire:).
+RPGM Archive Decrypter is a [RPG Maker Decrypter](https://github.com/uuksu/rpgmakerdecrypter) [rewrite in Rust](https://github.com/savannstm/rpgm-archive-decrypter-lib).
 
-It can be used to extract encrypted archives of RPG Maker XP/VX/VXAce game engines.
-
-It is faster and lighter than RPG Maker Decrypter, and also has **NO** requirements to run, except a working PC.
-
-_And also features much more cleaner code!_
+It extracts and creates encrypted archives of RPG Maker XP/VX/VXAce game engines. Faster and lighter than RPG Maker Decrypter.
 
 ## Installation
 
-Get required binaries in **Releases** section.
+Binaries are in **Releases**. They require **[x86-64-v2](https://en.wikipedia.org/wiki/X86-64#Microarchitecture_levels)** support.
 
 ## Usage
 
@@ -18,57 +14,63 @@ Call `rpgmad -h` for help.
 
 ### Decryption
 
-For example, to extract archive to same same directory where it exists:
-`rpgmad decrypt -i C:/Game/Archive.rgssad`.
+Extract an archive beside it: `rpgmad decrypt -i C:/Game/Archive.rgssad`.
 
-You can omit the file name, program will find it automatically: `rpgmad decrypt -i C:/Game`.
+The file name can be omitted; the archive is found automatically: `rpgmad decrypt -i C:/Game`, or just `rpgmad decrypt` inside the game directory.
 
-Or just `rpgmad decrypt` if you're already in the game directory.
+Use `-o` to extract elsewhere (created if missing), and `-d` to extract only some files: `rpgmad decrypt -d "Data/Actors.rvdata2:Graphics/Titles/Title.png"`.
 
-Use `-o` to extract elsewhere (the directory is created if missing), and `-d` to extract only some files: `rpgmad decrypt -d "Data/Actors.rvdata2:Graphics/Titles/Title.png"`.
-
-You can recongnize archives by their extensions: `rgssad`, `rgss2a`, `rgss3a`.
+Recognized extensions: `rgssad`, `rgss2a`, `rgss3a`.
 
 If a directory contains several archives, `rpgmad` warns, lists them and uses the first by name; the one in use is always printed. Pass the archive path to `-i` to choose.
 
 #### File name encoding
 
-File names inside archives are read as UTF-8 by default. Entries with names that are not valid UTF-8 are skipped with a warning (never written under a mangled name). Older archives made on Japanese systems usually need `--encoding shift_jis`; any [WHATWG label](https://encoding.spec.whatwg.org/#names-and-labels) except UTF-16 works.
+File names are read as UTF-8 by default. Entries with invalid UTF-8 names are skipped with a warning, never written under a mangled name. Archives made on Japanese systems usually need `--encoding shift_jis`. Any [WHATWG label](https://encoding.spec.whatwg.org/#names-and-labels) works, except UTF-16.
 
 ### Encryption
 
-`rpgmad` encrypts entries from `Data` and `Graphics` directories (default behavior, directories can be altered using `--encrypt-dirs` and `--additional-encrypt-dirs` arguments) back to the archives.
+`rpgmad` encrypts the `Data` and `Graphics` directories into an archive by default. Change them with `--encrypt-dirs` (`audio`, `data`, `fonts`, `graphics`), and add other folders, relative to the input path, with `--additional-encrypt-dirs`.
 
-Encryption requires an `--engine` argument (`xp`, `vx` or `vxace`) for proper encryption to the correct archive.
+`--engine` (`xp`, `vx` or `vxace`) is required: it selects the archive format.
 
-For example, to encrypt Data/Graphics directories to a `Game.rgss3a` archive: `rpgmad encrypt -i C:/Game -e vxace`.
+For example: `rpgmad encrypt -i C:/Game -e vxace` writes `Game.rgss3a`. Inside the game directory, `rpgmad encrypt -e vxace` is enough.
 
-Or just `rpgmad encrypt -e vxace` if you're already in the game directory.
+File names are stored as UTF-8 unless `--encoding` says otherwise, e.g. `--encoding shift_jis` for XP/VX games. A name the encoding cannot represent is an error.
 
-File names are stored as UTF-8 by default, use `--encoding shift_jis` for XP/VX games that expect it. A name that does not fit the encoding is an error.
+`-o` takes an output archive path or an existing directory to put `Game.<ext>` into. The format limits archives to 4 GiB.
 
-`-o` accepts either the output archive path or an existing directory to put `Game.<ext>` into. Archives are limited to 4 GiB by the format.
+If the archive already exists, `rpgmad` asks before replacing it; type `Y` to continue.
 
 ## GUI
 
-Our [rpgmdec](https://github.com/rpg-maker-translation-tools/rpgmdec) GUI provides the same functionality as `rpgmad`.
+[rpgmdec](https://github.com/rpg-maker-translation-tools/rpgmdec) provides the same functionality as `rpgmad` in a GUI.
 
 ## Development
 
 ### Building
 
-Requirements: `rustup` with installed Rust toolchain.
+You need Rust `1.88`.
 
-Clone the repository and compile with `cargo b -r`.
+```bash
+git clone https://github.com/savannstm/rpgm-archive-decrypter
+cd rpgm-archive-decrypter
+cargo build --release
+```
 
-### Tests
+The binary is `target/release/rpgmad` (`rpgmad.exe` on Windows).
 
-I'm not really skilled in tests, but the validity of output files is tested the following ways:
+### Features
 
-- Of images, using image viewers.
-- Of rx/rvdata files, using [rvpacker-txt-rs](https://github.com/savannstm/rvpacker-txt-rs).
+| Feature    | Default | Effect                                |
+| ---------- | ------- | ------------------------------------- |
+| `mimalloc` | yes     | Uses the mimalloc allocator.          |
 
-As long as these tests succesful, there shouldn't be any bugs.
+Disable the default to use the system allocator:
+
+```bash
+cargo build --release --no-default-features
+```
 
 ## Support
 
@@ -83,4 +85,4 @@ Even if you don't, we will still continue working on the project anyways.
 
 ## License
 
-Project is licensed under [WTFPL](https://www.wtfpl.net/).
+Licensed under [WTFPL](https://www.wtfpl.net/).

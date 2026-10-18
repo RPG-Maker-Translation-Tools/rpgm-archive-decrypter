@@ -2,31 +2,35 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v*"
-  workflow_dispatch:
+    branches: [main]
 
 env:
   BIN: rpgmad
   RUSTFLAGS_COMMON: >-
     -Ctarget-cpu=x86-64-v2
-    -Ctarget-feature=+aes,+sse2
-    -Copt-level=3
-    -Ccodegen-units=1
-    -Cpanic=abort
-    -Cstrip=symbols
-    -Cdebuginfo=0
-    -Cprefer-dynamic=no
     -Cembed-bitcode=yes
     -Cllvm-args=-function-sections=true
     -Cllvm-args=-data-sections=true
-    -Cllvm-args=-fp-contract=fast
-    -Cllvm-args=-denormal-fp-math=positive-zero
-    -Cllvm-args=-enable-no-trapping-fp-math=true
     -Cllvm-args=-unroll-threshold=750
 
 jobs:
+  # Only a commit whose message contains "Release vX.Y.Z" gets a release; other pushes skip the build and release.
+  version:
+    if: contains(github.event.head_commit.message, 'Release v')
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - id: tag
+        env:
+          MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          TAG=$(printf '%s\n' "$MESSAGE" | grep -oE 'Release v[0-9]+\.[0-9]+\.[0-9]+' | head -n1 | cut -d' ' -f2)
+          [ -n "$TAG" ] || { echo "no 'Release vX.Y.Z' in the commit message"; exit 1; }
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: version
     strategy:
       fail-fast: false
       matrix:
@@ -60,7 +64,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Outside the checkout: cargo-about scans the crate directory and would pick up UPX's GPL `COPYING`.
+          # Outside the checkout: cargo-about would scan the crate and pick up UPX's GPL `COPYING`.
           gh release download -R upx/upx -p 'upx-*-amd64_linux.tar.xz' -O "$RUNNER_TEMP/upx.tar.xz"
           mkdir "$RUNNER_TEMP/upx"
           tar -xJf "$RUNNER_TEMP/upx.tar.xz" -C "$RUNNER_TEMP/upx" --strip-components=1
@@ -83,7 +87,7 @@ jobs:
         run: |
           gh release download -R EmbarkStudios/cargo-about -p 'cargo-about-*-${{ matrix.about }}.tar.gz' -O about.tar.gz
           mkdir "$RUNNER_TEMP/about"
-          # GNU tar on Windows can't take `C:\` paths for -C, cygpath only exists there.
+          # GNU tar on Windows can't take `C:\` paths for -C; cygpath exists only there.
           tar -xzf about.tar.gz -C "$(cygpath -u "$RUNNER_TEMP/about" 2>/dev/null || echo "$RUNNER_TEMP/about")" --strip-components=1
           echo "$RUNNER_TEMP/about" >> "$GITHUB_PATH"
 
@@ -120,13 +124,16 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  # Separate job: two matrix legs creating the same release at once can race.
+  # Separate job: matrix legs creating the same release concurrently would race.
   release:
-    needs: build
-    if: github.ref_type == 'tag'
+    needs: [version, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      TAG: ${{ needs.version.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
     steps:
       - uses: actions/download-artifact@v8
         with:
@@ -134,6 +141,29 @@ jobs:
           merge-multiple: true
 
       - name: Release
-        uses: softprops/action-gh-release@v3
-        with:
-          files: dist/*
+        run: |
+          (cd dist && sha256sum * > SHA256SUMS.txt)
+          cat > "$RUNNER_TEMP/notes.md" <<EOF
+          ## Requirements
+
+          - x86-64-v2 baseline (SSE4.2, SSSE3, POPCNT, CMPXCHG16B)
+
+          ## Default features
+
+          - mimalloc
+
+          ## Downloads
+
+          - Windows (x86-64): $BIN.7z
+          - Linux (x86-64): $BIN.tar.xz
+
+          Only Windows and Linux (x86-64) builds are published for this release.
+
+          Windows builds are statically linked against the C runtime and need no redistributables.
+          Linux builds need glibc 2.39 or newer.
+          Binaries are compressed with UPX, so some antivirus programs may flag them.
+          SHA-256 checksums are in SHA256SUMS.txt.
+
+          All changes can be seen in the [CHANGELOG.md](https://github.com/$GH_REPO/blob/$TAG/CHANGELOG.md).
+          EOF
+          gh release create "$TAG" dist/* --target "$GITHUB_SHA" --notes-file "$RUNNER_TEMP/notes.md"
